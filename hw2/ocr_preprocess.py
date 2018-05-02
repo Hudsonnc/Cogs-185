@@ -1,77 +1,62 @@
-import re
 import numpy as np
+from pystruct.datasets import load_letters
 
-N_EXAMPLES = 5000
-N_FEATURES = 128
-
-def atoi(a):
-    return int(ord(a)-ord('a'))
-def itoa(i):
-    return chr(i+ord('a'))
-
-def iors(s):
-    try:
-        return int(s)
-    except ValueError: # if it is a string, return a string
-        return s
-
-def read_OCR(filename, n_examples = N_EXAMPLES, n_features = N_FEATURES):
-    F = open(filename)
-    dataset = {}
-    dataset['ids'] = np.zeros(n_examples, dtype=int)
-    dataset['labels'] = np.zeros(n_examples,dtype=int)
-    dataset['next_ids'] = np.zeros(n_examples,dtype=int)
-    dataset['word_ids'] = np.zeros(n_examples,dtype=int)
-    dataset['positions'] = np.zeros(n_examples,dtype=int)
-    dataset['folds'] = np.zeros(n_examples,dtype=int)
-    dataset['features'] = np.zeros([n_examples,n_features])
+def splitWord(feature, label, window):
+    feature = np.array(feature)
+    label = np.array(label).reshape(-1,1)
     
-    i = 0
-    for str_line in F.readlines():
-        line0 = list(map(iors, filter(None, re.split('\t', str_line.strip()))))
+    num_letters = feature.shape[0]
+    letter_features = feature.shape[1]
+    
+    feature_splits = []
+    label_splits = []
+    if num_letters < window:
+        features_to_append = np.zeros((window - num_letters, letter_features))
+        labels_to_append = np.array([26 for i in range(window - num_letters)]).reshape((-1,1))
         
-        dataset['ids'][i] = line0.pop(0)
-        dataset['labels'][i] = atoi(line0.pop(0))
-        dataset['next_ids'][i] = line0.pop(0)
-        dataset['word_ids'][i] = line0.pop(0)
-        dataset['positions'][i] = line0.pop(0)
-        dataset['folds'][i] = line0.pop(0)
-        if len(line0) != 128:  # Sanity check of the length
-            print(len(line0))
-
-        for j, v in enumerate(line0):
-            dataset['features'][i][j] = v
-        i += 1
-        if i == n_examples:
-            break
+        feature_split = (np.vstack((feature, features_to_append)))
+        label_split = (np.vstack((label, labels_to_append)))
+        
+        feature_splits.append(feature_split)
+        label_splits.append(label_split)
+    else: 
+        for i in range(num_letters - window + 1):
+            feature_split = feature[i:(i+window)]
+            label_split = label[i:(i+window)]
             
-    return dataset
+            feature_splits.append(feature_split)
+            label_splits.append(label_split)
+    return(np.array(feature_splits), np.array(label_splits))  
 
-def chop_idxs(ocr, window = 2, start = 0, stop = None):
-    if stop is None: stop = len(ocr['ids'])
-    chops = []
-    chop = []
-    i = start
-    while i < stop:
-        nextid = ocr['next_ids'][i]
-        if len(chop) < window:
-            chop.append(i)
-            if nextid == -1 or i == stop-1:
-                while len(chop) < window:
-                    chop.append('_')
-                if i == stop-1:
-                    chops.append(chop)
-            i = i+1
-        else:
-            chops.append(chop)
-            chop = []
-    return(np.array(chops))
+def splitWords(features, labels, window):
+    feature_splits, label_splits = zip(*list(map(lambda x, y: splitWord(x,y,window), features, labels)))
+    feature_splits = np.vstack(feature_splits)
+    label_splits = np.vstack(label_splits)
+    return(feature_splits, label_splits)
 
-def chops_to_str(ocr, chops):
-    return np.array([[itoa(ocr['labels'][int(idx)]) if idx != '_' else '_' for idx in chop] for chop in chops])
-
-def chops_to_labels(ocr, chops):
-    return np.array([[ocr['labels'][int(idx)] if idx != '_' else 26 for idx in chop] for chop in chops])
-
-def chops_to_features(ocr, chops):
-    return np.array([[ocr['features'][int(idx)] if idx != '_' else np.zeros(N_FEATURES) for idx in chop] for chop in chops])
+def selectWordsByLetters(words, start, stop):
+    i = 0
+    newWords = []
+    for word in words:
+        newWord = []
+        for letter in word:
+            if i >= start:
+                if i < stop:
+                    newWord.append(letter)
+                else:
+                    if newWord:
+                        newWords.append(np.array(newWord))
+                    return(np.array(newWords))
+            i = i + 1
+        if newWord:
+            newWords.append(np.array(newWord))
+            
+def loadWindows(start, stop, window):
+    letters = load_letters()
+    X, y = letters['data'], letters['labels']
+    X, y = np.array(X), np.array(y)
+    word_features = selectWordsByLetters(X, start, stop)
+    word_labels = selectWordsByLetters(y, start, stop)
+    window_features, window_labels = splitWords(word_features, word_labels, window)
+    return(window_features.astype(np.double), window_labels.astype(np.double))
+    
